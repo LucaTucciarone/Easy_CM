@@ -1,0 +1,29 @@
+# --- Original pipeline (internal reference only) ---
+OG_Pipeline/
+
+# --- Claude / AI session files ---
+CLAUDE.md
+project_summary.md
+.claude/
+
+# --- Pipeline data and outputs ---
+data/
+results/
+logs/
+
+# --- R artifacts ---
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# --- Python artifacts ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- System ---
+.DS_Store
+.snakemake/
+*.tmp

@@ -1,0 +1,72 @@
+# =============================================================================
+# EasyCM Configuration
+# =============================================================================
+# Cell-type marker gene discovery via pseudobulk DESeq2 + fGSEA
+# See docs/CONFIGURATION.md for detailed field descriptions
+
+# --- Input data ---
+inputs:
+  # Option A: Provide a Seurat RDS object (pipeline builds pseudobulk matrices)
+  seurat_object: ""                            # Path to Seurat .rds file
+
+  # Option B: Provide pre-made pseudobulk count matrices (skip pseudobulk step)
+  counts_dir: "data/counts"                    # Directory with {CellType}.counts.csv files
+
+  # Sample metadata (required for both options)
+  sample_metadata: "data/sample_metadata.csv"
+
+  # Column names in metadata / Seurat object
+  celltype_column: "coarse_annot"              # Cell type annotation column
+  sample_column: "samples"                     # Sample identifier column
+
+  # Which cell types to analyze (empty list = all discovered cell types)
+  celltypes: []
+
+# --- Output paths ---
+outputs:
+  results_dir: "results"
+  logs_dir: "logs"
+
+# --- Pipeline steps ---
+steps:
+  make_pseudobulk: false                       # true = build from Seurat; false = use counts_dir
+  fgsea: true                                  # Run pathway enrichment after DESeq2
+
+# --- Sample and gene filtering ---
+filtering:
+  # Key-value pairs to filter samples before analysis
+  sample_filters:
+    description_of_diabetes_status: "Control Without Diabetes"
+    treatments: "no_treatment"
+
+  min_cells_per_sample: 20                     # Minimum cells of this type per sample
+  min_gene_counts: 5                           # Minimum raw counts for gene filtering
+  min_gene_proportion: 0.25                    # Gene must pass min_gene_counts in this fraction of samples
+  donor_col: "rrid"                            # Column for donor deduplication (keep first per donor)
+
+# --- DESeq2 parameters ---
+deseq2:
+  # Design formula: subtype = "interest" vs "other", sample = donor/sample ID
+  design: "~ subtype + sample"
+  fdr_threshold: 0.05
+  lfc_threshold: 0                             # Log2 fold-change threshold (0 = disabled)
+
+# --- fGSEA parameters ---
+fgsea:
+  fdr_threshold: 0.10
+  min_gene_set_size: 10
+  max_gene_set_size: 500
+  gene_sets_file: "resources/gsea_files/reactome_kegg.gmt.txt"
+  exclude_gene_lists:
+    - "resources/gsea_files/rpl_genes.csv"
+    - "resources/gsea_files/rps_genes.csv"
+    - "resources/gsea_files/mtr_genes.csv"
+  exclude_gene_patterns:
+    - "^MT-"
+    - "^NA"
+  ranking_stat: "stat"                         # stat | lfc_pvalue
+  n_top_pathways_plot: 20                      # Number of pathways in bar chart
+
+# --- Logging ---
+logging:
+  level: "INFO"                                # DEBUG | INFO | WARN | ERROR

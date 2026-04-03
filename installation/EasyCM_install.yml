@@ -1,0 +1,47 @@
+name: EasyCM
+channels:
+  - conda-forge
+  - bioconda
+  - r
+  - defaults
+dependencies:
+  # --- Python (for Snakemake) ---
+  - python >=3.11,<3.14
+  - pip
+
+  # --- Workflow management ---
+  - snakemake-minimal >=7,<8
+
+  # --- R base ---
+  - r-base
+
+  # --- Bioconductor core ---
+  - bioconductor-deseq2
+  - bioconductor-fgsea
+
+  # --- Pipeline requirements ---
+  - r-yaml
+  - r-data.table
+  - r-optparse
+  - r-r.utils
+
+  # --- Tidyverse ---
+  - r-tidyverse
+
+  # --- Plotting ---
+  - r-ggplot2
+  - r-ggrepel
+  - r-viridis
+  - r-rcolorbrewer
+
+  # --- Data wrangling ---
+  - r-matrix
+  - r-stringi
+
+  # --- Optional: Seurat (only needed if make_pseudobulk = true) ---
+  # Uncomment below if building pseudobulk from Seurat objects:
+  # - r-seurat
+
+  # --- Jupyter / notebook support ---
+  - r-irkernel
+  - notebook
