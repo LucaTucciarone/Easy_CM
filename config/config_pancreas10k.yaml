@@ -1,0 +1,52 @@
+# =============================================================================
+# EasyCM -- pancreas 10k subset local run
+# =============================================================================
+# Consumes EasyPseudobulk output from the pancreas_10k_subset.rds run.
+# Used for validating the pipeline against TEST/easyCM_results (the OG
+# reference run) after the EasyPseudobulk extraction + apeglm shrinkage
+# refactor.
+
+inputs:
+  counts_dir:      "/home/biouser/workspace/Pseudobulk/output_v2/counts/easycm"
+  sample_metadata: "/home/biouser/workspace/Pseudobulk/output_v2/metadata/donor_metadata.tsv"
+  sample_column:   "donor_accession"
+  celltypes: []                          # empty = auto-discover from counts_dir
+
+outputs:
+  results_dir: "/home/biouser/workspace/EasyCM/TEST/easyCM_results_v2"
+  logs_dir:    "/home/biouser/workspace/EasyCM/TEST/easyCM_results_v2/logs"
+
+steps:
+  fgsea: true
+
+filtering:
+  # Match the OG/TEST filter: only healthy donors (maps to derived_diabetes_status=Normal)
+  sample_filters:
+    derived_diabetes_status: "Normal"
+  min_cells_per_sample: 20
+  min_gene_counts:      5
+  min_gene_proportion:  0.25
+  donor_col:            "donor_accession"
+
+deseq2:
+  design:        "~ subtype + sample"
+  fdr_threshold: 0.05
+  lfc_threshold: 0
+
+fgsea:
+  fdr_threshold:    0.10
+  min_gene_set_size: 10
+  max_gene_set_size: 500
+  gene_sets_file:   "/home/biouser/workspace/EasyCM/resources/gsea_files/reactome_kegg.gmt.txt"
+  exclude_gene_lists:
+    - "/home/biouser/workspace/EasyCM/resources/gsea_files/rpl_genes.csv"
+    - "/home/biouser/workspace/EasyCM/resources/gsea_files/rps_genes.csv"
+    - "/home/biouser/workspace/EasyCM/resources/gsea_files/mtr_genes.csv"
+  exclude_gene_patterns:
+    - "^MT-"
+    - "^NA"
+  ranking_stat:        "stat"
+  n_top_pathways_plot: 20
+
+logging:
+  level: "INFO"

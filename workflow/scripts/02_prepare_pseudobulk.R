@@ -1,26 +1,30 @@
 # =============================================================================
 # 02_prepare_pseudobulk.R
-# EasyCM -- Pseudobulk Matrix Preparation
+# EasyCM -- Pseudobulk Matrix Preparation (consumes EasyPseudobulk output)
 #
 # PURPOSE:
-#   For a given cell type, prepare the combined count matrix and coldata
-#   for DESeq2. Either builds pseudobulk from a Seurat object or loads
-#   pre-made count matrices.
+#   For a given cell type, assemble the combined count matrix and coldata
+#   for DESeq2 from pre-made pseudobulk matrices produced by EasyPseudobulk.
 #
-#   The key design: each sample appears TWICE in the combined matrix --
-#   once as "interest" (cells of this type) and once as "other" (all other
-#   cells). DESeq2 then tests ~ subtype + sample, where subtype = interest/other
-#   and sample controls for donor effects.
+#   Each donor appears TWICE in the combined matrix -- once as "interest"
+#   (cells of this type) and once as "other" (all other cells). DESeq2 then
+#   tests ~ subtype + sample, where subtype = interest/other and sample
+#   controls for donor effects.
+#
+#   NOTE: this script used to build pseudobulks directly from a Seurat RDS.
+#   That path was extracted into the standalone EasyPseudobulk notebook so
+#   every tool in the Easy suite can share one upstream pseudobulk step.
+#   EasyCM now ONLY consumes the counts/easycm layout EasyPseudobulk writes.
 #
 # USAGE:
 #   Rscript workflow/scripts/02_prepare_pseudobulk.R \
 #       --config config/config.yaml --celltype Beta
 #
 # INPUTS:
-#   - Config YAML
-#   - Sample metadata CSV
-#   - Either: Seurat RDS object (make_pseudobulk = true)
-#   - Or: Pre-made count matrices in counts_dir (make_pseudobulk = false)
+#   - Config YAML (inputs.counts_dir must point at EasyPseudobulk's
+#     {output_dir}/counts/easycm/ directory)
+#   - Sample metadata tsv/csv (EasyPseudobulk's donor_metadata.tsv works
+#     out of the box once the sample_column is set to the donor column)
 #
 # OUTPUTS:
 #   results/{celltype}/intermediates/coldata.csv
@@ -92,24 +96,14 @@ main <- function(config_path, celltype) {
         return(invisible(NULL))
     }
 
-    # --- Load count matrices ---
-    if (isTRUE(cfg$steps$make_pseudobulk)) {
-        # Build from Seurat object
-        interest_and_other <- build_pseudobulk_from_seurat(
-            cfg, celltype, sample_meta, logger)
-        if (is.null(interest_and_other)) return(invisible(NULL))
-        interest_counts <- interest_and_other$interest
-        other_counts    <- interest_and_other$other
-    } else {
-        # Load pre-made matrices
-        loaded <- load_premade_matrices(cfg, celltype, logger)
-        if (is.null(loaded)) return(invisible(NULL))
-        interest_counts <- loaded$interest
-        other_counts    <- loaded$other
-    }
+    # --- Load pre-made count matrices from EasyPseudobulk ---
+    loaded <- load_premade_matrices(cfg, celltype, logger)
+    if (is.null(loaded)) return(invisible(NULL))
+    interest_counts <- loaded$interest
+    other_counts    <- loaded$other
 
     # --- Donor filtering: keep only samples with enough cells ---
-    sample_col <- cfg$inputs$sample_column %||% "samples"
+    sample_col <- cfg$inputs$sample_column %||% "donor_accession"
     donor_col  <- cfg$filtering$donor_col
 
     # Standardize sample names (replace hyphens with dots to match matrix colnames)
@@ -223,121 +217,52 @@ main <- function(config_path, celltype) {
 
 
 # =============================================================================
-# Pseudobulk from Seurat
+# Load pre-made matrices (EasyPseudobulk counts/easycm layout)
 # =============================================================================
-
-build_pseudobulk_from_seurat <- function(cfg, celltype, sample_meta, logger) {
-
-    suppressMessages(library(Seurat))
-
-    seurat_path  <- cfg$inputs$seurat_object
-    ct_col       <- cfg$inputs$celltype_column %||% "coarse_annot"
-    sample_col   <- cfg$inputs$sample_column %||% "samples"
-
-    logger$info("load_seurat", sprintf("path=%s", seurat_path))
-
-    data <- try_logged(
-        readRDS(seurat_path),
-        logger, "load_seurat", "Seurat object loaded"
-    )
-    if (is.null(data)) return(NULL)
-
-    # Clean cell type annotations (remove spaces, as in OG pipeline)
-    data@meta.data[[ct_col]] <- gsub(" ", "", data@meta.data[[ct_col]])
-    Idents(data) <- data@meta.data[[ct_col]]
-
-    available_types <- unique(data@meta.data[[ct_col]])
-    if (!celltype %in% available_types) {
-        logger$skip("celltype_not_found",
-            sprintf("'%s' not in Seurat celltypes: %s",
-                    celltype, paste(available_types, collapse = ", ")))
-        return(NULL)
-    }
-
-    # Subset and aggregate
-    interest_seurat <- subset(data, idents = celltype)
-    other_seurat    <- subset(data, idents = celltype, invert = TRUE)
-
-    interest_bulk <- try_logged(
-        AggregateExpression(interest_seurat, group.by = sample_col,
-                           return.seurat = TRUE)[["RNA"]]$counts %>% as.data.frame(),
-        logger, "aggregate_interest", "Interest pseudobulk created"
-    )
-    if (is.null(interest_bulk)) return(NULL)
-
-    other_bulk <- try_logged(
-        AggregateExpression(other_seurat, group.by = sample_col,
-                           return.seurat = TRUE)[["RNA"]]$counts %>% as.data.frame(),
-        logger, "aggregate_other", "Other pseudobulk created"
-    )
-    if (is.null(other_bulk)) return(NULL)
-
-    logger$info("pseudobulk", sprintf("interest: %d genes x %d samples, other: %d genes x %d samples",
-                nrow(interest_bulk), ncol(interest_bulk),
-                nrow(other_bulk), ncol(other_bulk)))
-
-    list(interest = interest_bulk, other = other_bulk)
-}
-
-
-# =============================================================================
-# Load pre-made matrices
+#
+# Expects OG-style layout produced by EasyPseudobulk:
+#   {counts_dir}/cell_mtx/{celltype}_persample_RNA_counts.tsv   # interest
+#   {counts_dir}/allbut_mtx/{celltype}_persample_RNA_counts.tsv # other
+#
+# Cell-type names are filesystem-safe (gsub("[^A-Za-z0-9]+", "_", label)).
+# This function tries the literal name first, then the safe name.
 # =============================================================================
 
 load_premade_matrices <- function(cfg, celltype, logger) {
 
     counts_dir <- cfg$inputs$counts_dir
-    safe_name  <- gsub("[^[:alnum:]]", "_", celltype)
+    safe_name  <- gsub("[^A-Za-z0-9]+", "_", celltype)
 
-    # Look for interest (cell_mtx) and other (allbut_mtx) matrices
-    # Support both EasyCM naming ({CellType}.counts.csv) and OG naming
+    candidates <- list(
+        list(interest = file.path(counts_dir, "cell_mtx",
+                                  paste0(celltype,  "_persample_RNA_counts.tsv")),
+             other    = file.path(counts_dir, "allbut_mtx",
+                                  paste0(celltype,  "_persample_RNA_counts.tsv"))),
+        list(interest = file.path(counts_dir, "cell_mtx",
+                                  paste0(safe_name, "_persample_RNA_counts.tsv")),
+             other    = file.path(counts_dir, "allbut_mtx",
+                                  paste0(safe_name, "_persample_RNA_counts.tsv")))
+    )
+
     interest_path <- NULL
     other_path    <- NULL
-
-    # Try EasyCM naming: {CellType}.counts.csv in counts_dir
-    easycm_path <- file.path(counts_dir, paste0(safe_name, ".counts.csv"))
-    if (file.exists(easycm_path)) {
-        # Single matrix per celltype -- need to handle differently
-        # For now, we need paired matrices (interest + other)
-        logger$info("load_counts", sprintf("Found single matrix: %s", easycm_path))
-        logger$error("load_counts",
-            "EasyCM requires paired matrices (interest + other). Provide cell_mtx/ and allbut_mtx/ subdirectories, or use make_pseudobulk=true with a Seurat object.")
-        return(NULL)
+    for (cand in candidates) {
+        if (file.exists(cand$interest) && file.exists(cand$other)) {
+            interest_path <- cand$interest
+            other_path    <- cand$other
+            break
+        }
     }
 
-    # Try OG naming: cell_mtx/{CellType}_persample_RNA_counts.tsv
-    og_interest <- file.path(counts_dir, "cell_mtx",
-                             paste0(celltype, "_persample_RNA_counts.tsv"))
-    og_other    <- file.path(counts_dir, "allbut_mtx",
-                             paste0(celltype, "_persample_RNA_counts.tsv"))
-
-    # Also try with safe_name
-    if (!file.exists(og_interest)) {
-        og_interest <- file.path(counts_dir, "cell_mtx",
-                                 paste0(safe_name, "_persample_RNA_counts.tsv"))
-    }
-    if (!file.exists(og_other)) {
-        og_other <- file.path(counts_dir, "allbut_mtx",
-                              paste0(safe_name, "_persample_RNA_counts.tsv"))
-    }
-
-    # Try paired naming: {CellType}_interest.counts.csv / {CellType}_other.counts.csv
-    paired_interest <- file.path(counts_dir, paste0(safe_name, "_interest.counts.csv"))
-    paired_other    <- file.path(counts_dir, paste0(safe_name, "_other.counts.csv"))
-
-    if (file.exists(og_interest) && file.exists(og_other)) {
-        interest_path <- og_interest
-        other_path    <- og_other
-    } else if (file.exists(paired_interest) && file.exists(paired_other)) {
-        interest_path <- paired_interest
-        other_path    <- paired_other
-    } else {
+    if (is.null(interest_path)) {
         logger$skip("no_matrices",
-            sprintf("Could not find paired count matrices for '%s' in %s", celltype, counts_dir))
+            sprintf("No paired count matrices for '%s' under %s/{cell_mtx,allbut_mtx}/",
+                    celltype, counts_dir))
         return(NULL)
     }
 
-    logger$info("load_counts", sprintf("interest=%s, other=%s", interest_path, other_path))
+    logger$info("load_counts", sprintf("interest=%s, other=%s",
+                basename(interest_path), basename(other_path)))
 
     interest <- load_count_matrix(interest_path)
     other    <- load_count_matrix(other_path)
@@ -361,7 +286,8 @@ load_premade_matrices <- function(cfg, celltype, logger) {
     colnames(interest) <- gsub("-", ".", colnames(interest))
     colnames(other)    <- gsub("-", ".", colnames(other))
 
-    logger$info("load_counts", sprintf("interest: %d genes x %d samples, other: %d genes x %d samples",
+    logger$info("load_counts",
+        sprintf("interest: %d genes x %d samples, other: %d genes x %d samples",
                 nrow(interest), ncol(interest), nrow(other), ncol(other)))
 
     list(interest = interest, other = other)

@@ -28,35 +28,25 @@ def sanitize(name):
 
 
 # --- Discover cell types ---
-# If celltypes list is specified in config, use that.
-# Otherwise, discover from count matrix files in counts_dir.
+# Cell types come from EasyPseudobulk's counts/easycm layout:
+#     {counts_dir}/cell_mtx/{celltype}_persample_RNA_counts.tsv
+# If inputs.celltypes is a non-empty list in the config, that list wins.
 if cfg["inputs"].get("celltypes"):
     CELLTYPES = cfg["inputs"]["celltypes"]
 else:
-    counts_dir = cfg["inputs"]["counts_dir"]
-    if cfg["steps"].get("make_pseudobulk", False):
-        # When building from Seurat, celltypes must be specified in config
-        raise ValueError(
-            "steps.make_pseudobulk = true requires inputs.celltypes to be set. "
-            "List the cell types to analyze in config.yaml."
+    counts_dir   = cfg["inputs"]["counts_dir"]
+    cell_mtx_dir = os.path.join(counts_dir, "cell_mtx")
+    if not os.path.isdir(cell_mtx_dir):
+        raise FileNotFoundError(
+            f"Expected EasyPseudobulk layout at {cell_mtx_dir}. "
+            f"Run the EasyPseudobulk notebook first, then point "
+            f"inputs.counts_dir at its counts/easycm/ output."
         )
-    else:
-        # Discover from {CellType}.counts.csv files
-        count_files = [f for f in os.listdir(counts_dir)
-                       if f.endswith(".counts.csv") or f.endswith(".counts.csv.gz")]
-        CELLTYPES = sorted(set(
-            re.sub(r"\.counts\.csv(\.gz)?$", "", f) for f in count_files
-        ))
-
-        # Also check for OG pipeline layout (cell_mtx/ subdirectory)
-        if not CELLTYPES:
-            cell_mtx_dir = os.path.join(counts_dir, "cell_mtx")
-            if os.path.isdir(cell_mtx_dir):
-                tsv_files = [f for f in os.listdir(cell_mtx_dir)
-                             if f.endswith("_persample_RNA_counts.tsv")]
-                CELLTYPES = sorted(set(
-                    f.replace("_persample_RNA_counts.tsv", "") for f in tsv_files
-                ))
+    tsv_files = [f for f in os.listdir(cell_mtx_dir)
+                 if f.endswith("_persample_RNA_counts.tsv")]
+    CELLTYPES = sorted(set(
+        f.replace("_persample_RNA_counts.tsv", "") for f in tsv_files
+    ))
 
 if not CELLTYPES:
     raise ValueError("No cell types found. Set inputs.celltypes in config or provide count matrices.")

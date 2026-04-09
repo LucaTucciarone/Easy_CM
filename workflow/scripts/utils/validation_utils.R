@@ -83,7 +83,7 @@ validate_config <- function(cfg) {
     cat("\n-- Validating config.yaml ------------------------------------------\n")
 
     # --- Required top-level sections ---
-    required_sections <- c("inputs", "outputs", "steps", "filtering", "deseq2", "logging")
+    required_sections <- c("inputs", "outputs", "filtering", "deseq2", "logging")
     for (section in required_sections) {
         if (is.null(cfg[[section]])) {
             errors <- c(errors, sprintf("  [ERROR] Missing required section: '%s'", section))
@@ -93,30 +93,15 @@ validate_config <- function(cfg) {
     # --- Input file paths ---
     if (!is.null(cfg$inputs)) {
 
-        # Either seurat_object or counts_dir must be usable
-        has_seurat <- !is.null(cfg$inputs$seurat_object) &&
-                      nzchar(cfg$inputs$seurat_object) &&
-                      file.exists(cfg$inputs$seurat_object)
+        # counts_dir points at EasyPseudobulk's counts/easycm/ output
         has_counts <- !is.null(cfg$inputs$counts_dir) &&
                       dir.exists(cfg$inputs$counts_dir)
 
-        if (isTRUE(cfg$steps$make_pseudobulk)) {
-            if (!has_seurat && !is.null(cfg$inputs$seurat_object) &&
-                nzchar(cfg$inputs$seurat_object)) {
-                errors <- c(errors, sprintf("  [ERROR] seurat_object not found: '%s'",
-                                            cfg$inputs$seurat_object))
-            } else if (!has_seurat) {
-                errors <- c(errors, "  [ERROR] steps.make_pseudobulk = true but no seurat_object specified")
-            } else {
-                cat(sprintf("  [OK] seurat_object: %s\n", cfg$inputs$seurat_object))
-            }
+        if (!has_counts) {
+            errors <- c(errors, sprintf("  [ERROR] counts_dir not found: '%s'",
+                                        cfg$inputs$counts_dir %||% "<unset>"))
         } else {
-            if (!has_counts) {
-                errors <- c(errors, sprintf("  [ERROR] counts_dir not found: '%s'",
-                                            cfg$inputs$counts_dir))
-            } else {
-                cat(sprintf("  [OK] counts_dir: %s\n", cfg$inputs$counts_dir))
-            }
+            cat(sprintf("  [OK] counts_dir: %s\n", cfg$inputs$counts_dir))
         }
 
         if (!is.null(cfg$inputs$sample_metadata) && nzchar(cfg$inputs$sample_metadata)) {

@@ -2,24 +2,24 @@
 # EasyCM Configuration
 # =============================================================================
 # Cell-type marker gene discovery via pseudobulk DESeq2 + fGSEA
-# See docs/CONFIGURATION.md for detailed field descriptions
+#
+# EasyCM consumes pre-made pseudobulk matrices produced by the
+# EasyPseudobulk notebook. Point `counts_dir` at the notebook's
+# `{output_dir}/counts/easycm/` directory.
+# See docs/CONFIGURATION.md for detailed field descriptions.
 
 # --- Input data ---
 inputs:
-  # Option A: Provide a Seurat RDS object (pipeline builds pseudobulk matrices)
-  seurat_object: ""                            # Path to Seurat .rds file
+  # EasyPseudobulk output: counts/easycm/{cell_mtx,allbut_mtx}/{celltype}_persample_RNA_counts.tsv
+  counts_dir: "data/counts/easycm"
 
-  # Option B: Provide pre-made pseudobulk count matrices (skip pseudobulk step)
-  counts_dir: "data/counts"                    # Directory with {CellType}.counts.csv files
+  # Donor-level metadata (EasyPseudobulk writes this as metadata/donor_metadata.tsv).
+  # `sample_column` must name the donor-id column in this file; it must
+  # also match the column headers inside the counts matrices.
+  sample_metadata: "data/donor_metadata.tsv"
+  sample_column: "donor_accession"
 
-  # Sample metadata (required for both options)
-  sample_metadata: "data/sample_metadata.csv"
-
-  # Column names in metadata / Seurat object
-  celltype_column: "coarse_annot"              # Cell type annotation column
-  sample_column: "samples"                     # Sample identifier column
-
-  # Which cell types to analyze (empty list = all discovered cell types)
+  # Which cell types to analyze (empty list = all discovered from counts_dir)
   celltypes: []
 
 # --- Output paths ---
@@ -29,20 +29,18 @@ outputs:
 
 # --- Pipeline steps ---
 steps:
-  make_pseudobulk: false                       # true = build from Seurat; false = use counts_dir
   fgsea: true                                  # Run pathway enrichment after DESeq2
 
 # --- Sample and gene filtering ---
 filtering:
-  # Key-value pairs to filter samples before analysis
+  # Key-value pairs to filter samples before analysis (applied to sample_metadata)
   sample_filters:
-    description_of_diabetes_status: "Control Without Diabetes"
-    treatments: "no_treatment"
+    derived_diabetes_status: "Normal"
 
   min_cells_per_sample: 20                     # Minimum cells of this type per sample
   min_gene_counts: 5                           # Minimum raw counts for gene filtering
   min_gene_proportion: 0.25                    # Gene must pass min_gene_counts in this fraction of samples
-  donor_col: "rrid"                            # Column for donor deduplication (keep first per donor)
+  donor_col: "donor_accession"                 # Column for donor deduplication (keep first per donor)
 
 # --- DESeq2 parameters ---
 deseq2:

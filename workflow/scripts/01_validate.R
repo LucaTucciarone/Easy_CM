@@ -97,53 +97,26 @@ main <- function(config_path) {
     # --- Discover and validate cell types ---
     cat("\n-- Discovering cell types ------------------------------------------\n")
 
-    if (isTRUE(cfg$steps$make_pseudobulk)) {
-        # Cell types will be discovered from Seurat object at runtime
-        cat("  Pseudobulk mode: cell types will be discovered from Seurat object\n")
-        if (length(cfg$inputs$celltypes) > 0) {
-            cat(sprintf("  User-specified cell types: %s\n",
-                        paste(cfg$inputs$celltypes, collapse = ", ")))
-        }
+    # Discover from EasyPseudobulk counts/easycm/ layout
+    discovered <- discover_celltypes(cfg$inputs$counts_dir)
+    cat(sprintf("  Found %d cell type count matrices: %s\n",
+                length(discovered), paste(discovered, collapse = ", ")))
+
+    if (length(cfg$inputs$celltypes) > 0) {
         celltypes <- cfg$inputs$celltypes
+        missing_ct <- setdiff(celltypes, discovered)
+        if (length(missing_ct) > 0) {
+            all_errors <- c(all_errors, sprintf(
+                "  [ERROR] Requested cell types not found in counts_dir: %s",
+                paste(missing_ct, collapse = ", ")))
+        }
     } else {
-        # Discover from count matrix files
-        discovered <- discover_celltypes(cfg$inputs$counts_dir)
-        cat(sprintf("  Found %d cell type count matrices: %s\n",
-                    length(discovered), paste(discovered, collapse = ", ")))
+        celltypes <- discovered
+    }
 
-        if (length(cfg$inputs$celltypes) > 0) {
-            celltypes <- cfg$inputs$celltypes
-            missing_ct <- setdiff(celltypes, discovered)
-            if (length(missing_ct) > 0) {
-                all_errors <- c(all_errors, sprintf(
-                    "  [ERROR] Requested cell types not found in counts_dir: %s",
-                    paste(missing_ct, collapse = ", ")))
-            }
-        } else {
-            celltypes <- discovered
-        }
-
-        if (length(celltypes) == 0) {
-            all_errors <- c(all_errors,
-                "  [ERROR] No cell types found. Check counts_dir or celltypes config.")
-        }
-
-        # Validate each count matrix
-        for (ct in celltypes) {
-            safe_name   <- gsub("[^[:alnum:]]", "_", ct)
-            counts_file <- file.path(cfg$inputs$counts_dir, paste0(safe_name, ".counts.csv"))
-            counts_gz   <- paste0(counts_file, ".gz")
-            actual_path <- if (file.exists(counts_file)) counts_file else counts_gz
-
-            if (file.exists(actual_path)) {
-                cm_result    <- validate_count_matrix(actual_path, celltype_name = ct)
-                all_errors   <- c(all_errors, cm_result$errors)
-                all_warnings <- c(all_warnings, cm_result$warnings)
-                if (length(cm_result$errors) == 0) {
-                    cat(sprintf("  [OK] %s: %d samples\n", ct, cm_result$n_samples))
-                }
-            }
-        }
+    if (length(celltypes) == 0) {
+        all_errors <- c(all_errors,
+            "  [ERROR] No cell types found. Check counts_dir or celltypes config.")
     }
 
     # --- Final report ---

@@ -18,6 +18,7 @@ dependencies:
   # --- Bioconductor core ---
   - bioconductor-deseq2
   - bioconductor-fgsea
+  - bioconductor-apeglm    # apeglm shrinkage estimator for lfcShrink()
 
   # --- Pipeline requirements ---
   - r-yaml
@@ -39,8 +40,7 @@ dependencies:
   - r-stringi
 
   # --- Optional: Seurat (only needed if make_pseudobulk = true) ---
-  # Uncomment below if building pseudobulk from Seurat objects:
-  # - r-seurat
+  - r-seurat
 
   # --- Jupyter / notebook support ---
   - r-irkernel

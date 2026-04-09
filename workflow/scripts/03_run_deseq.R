@@ -130,6 +130,41 @@ main <- function(config_path, celltype) {
     )
     if (is.null(res)) return(invisible(NULL))
 
+    # --- LFC shrinkage (apeglm) ---
+    # Adds log2FoldChange_shrunk as a sibling column in the same tsv. The
+    # regular log2FoldChange / stat / pvalue / padj columns stay as MLE
+    # estimates. apeglm runs on the coef, not the contrast, so we need the
+    # coefficient name DESeq2 assigned for "interest vs other". For the
+    # design ~ subtype + sample with factor levels c("other","interest"),
+    # that is "subtype_interest_vs_other".
+    res$log2FoldChange_shrunk <- NA_real_
+
+    shrunk_coef_name <- "subtype_interest_vs_other"
+    available_coefs  <- resultsNames(dds)
+    if (!shrunk_coef_name %in% available_coefs) {
+        # Fall back to whichever coef name matches 'interest'
+        fallback <- available_coefs[grepl("interest", available_coefs, fixed = TRUE)]
+        if (length(fallback) == 1) shrunk_coef_name <- fallback
+    }
+
+    res_shrunk <- tryCatch(
+        suppressMessages(DESeq2::lfcShrink(dds, coef = shrunk_coef_name,
+                                           type = "apeglm", quiet = TRUE)),
+        error = function(e) {
+            logger$warn("lfc_shrinkage",
+                sprintf("lfcShrink failed (coef=%s): %s",
+                        shrunk_coef_name, e$message))
+            NULL
+        }
+    )
+    if (!is.null(res_shrunk)) {
+        shrunk_df <- as.data.frame(res_shrunk)
+        idx <- match(res$gene, rownames(shrunk_df))
+        res$log2FoldChange_shrunk <- shrunk_df$log2FoldChange[idx]
+        logger$info("lfc_shrinkage",
+            sprintf("log2FoldChange_shrunk added (coef=%s)", shrunk_coef_name))
+    }
+
     # --- Count DEGs ---
     fdr_threshold <- cfg$deseq2$fdr_threshold %||% 0.05
     lfc_threshold <- cfg$deseq2$lfc_threshold %||% 0
