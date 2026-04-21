@@ -7,14 +7,14 @@
 # refactor.
 
 inputs:
-  counts_dir:      "/home/biouser/workspace/Pseudobulk/output_v2/counts/easycm"
-  sample_metadata: "/home/biouser/workspace/Pseudobulk/output_v2/metadata/sample_metadata.tsv"
+  counts_dir:      "/nfs/lab/tscc/projects/PankBase/CelltypeMarkers/EasyCM/Apr8_26/Inputs/counts/easycm"
+  sample_metadata: "/nfs/lab/tscc/projects/PankBase/CelltypeMarkers/EasyCM/Apr8_26/Inputs/metadata/sample_metadata.tsv"
   sample_column:   "samples"
   celltypes: []                          # empty = auto-discover from counts_dir
 
 outputs:
-  results_dir: "/home/biouser/workspace/EasyCM/TEST/easyCM_results_v2"
-  logs_dir:    "/home/biouser/workspace/EasyCM/TEST/easyCM_results_v2/logs"
+  results_dir: "/nfs/lab/tscc/projects/PankBase/CelltypeMarkers/EasyCM/Apr8_26/results"
+  logs_dir:    "/nfs/lab/tscc/projects/PankBase/CelltypeMarkers/EasyCM/Apr8_26/logs"
 
 steps:
   fgsea: true
@@ -38,11 +38,11 @@ fgsea:
   fdr_threshold:    0.10
   min_gene_set_size: 10
   max_gene_set_size: 500
-  gene_sets_file:   "/home/biouser/workspace/EasyCM/resources/gsea_files/reactome_kegg.gmt.txt"
+  gene_sets_file:   "/nfs/lab/tscc/luca/Methods/EasyCM/resources/gsea_files/reactome_kegg.gmt.txt"
   exclude_gene_lists:
-    - "/home/biouser/workspace/EasyCM/resources/gsea_files/rpl_genes.csv"
-    - "/home/biouser/workspace/EasyCM/resources/gsea_files/rps_genes.csv"
-    - "/home/biouser/workspace/EasyCM/resources/gsea_files/mtr_genes.csv"
+    - "/nfs/lab/tscc/luca/Methods/EasyCM/resources/gsea_files/rpl_genes.csv"
+    - "/nfs/lab/tscc/luca/Methods/EasyCM/resources/gsea_files/rps_genes.csv"
+    - "/nfs/lab/tscc/luca/Methods/EasyCM/resources/gsea_files/mtr_genes.csv"
   exclude_gene_patterns:
     - "^MT-"
     - "^NA"

@@ -1,59 +1,55 @@
 # Configuration
 
-EasyCM uses a single YAML config file for all analysis parameters. No
-contrasts file is needed -- cell types are automatically discovered from
-the count matrices.
+One YAML config drives the analysis. Cell types are auto-discovered from the count
+directory unless `inputs.celltypes` is set.
 
 | File | Purpose |
 |------|---------|
-| `config/config.yaml` | Analysis parameters: inputs, filtering, thresholds, step toggles |
-| `profiles/local/config.yaml` | Local execution: core count, keep-going, latency wait |
-| `profiles/slurm/config.yaml` | SLURM execution: job count, sbatch template, account/partition |
+| `config/config.yaml` | Analysis parameters |
+| `profiles/local/config.yaml` | Local execution: cores, keep-going, latency wait |
+| `profiles/slurm/config.yaml` | SLURM execution (not tested on ophelia) |
 
 ---
 
-## Config File Reference
+## Config reference
 
 ### `inputs`
 
 ```yaml
 inputs:
-  seurat_object: ""                          # Path to Seurat .rds (only if make_pseudobulk = true)
-  counts_dir: "data/counts"                  # Directory with pseudobulk count matrices
+  counts_dir: "data/counts"
   sample_metadata: "data/sample_metadata.csv"
-  celltype_column: "coarse_annot"            # Cell type column in metadata/Seurat
-  sample_column: "samples"                   # Sample ID column
-  celltypes: []                              # Empty = all discovered; or list specific ones
+  celltype_column: "coarse_annot"
+  sample_column: "samples"
+  celltypes: []              # empty = auto-discover
 ```
 
-- **`seurat_object`**: Only used when `steps.make_pseudobulk: true`. The
-  pipeline will subset cells per cell type and aggregate via
-  `AggregateExpression()`.
-- **`counts_dir`**: Used when `steps.make_pseudobulk: false`. See
-  [Count Matrix Format](#count-matrix-format) below.
-- **`celltypes`**: Leave empty to auto-discover all cell types from
-  `counts_dir`. Specify a list to restrict analysis to specific types.
+| Key | Meaning |
+|-----|---------|
+| `counts_dir` | Directory holding the pseudobulk matrices from EasyPseudobulk |
+| `sample_metadata` | CSV with one row per sample |
+| `celltype_column` | Metadata column containing cell-type labels (used for validation) |
+| `sample_column` | Column carrying sample IDs (must match count-matrix column headers) |
+| `celltypes` | Restrict to a list, or leave empty to run every discovered cell type |
 
 ### `filtering`
 
 ```yaml
 filtering:
-  sample_filters:                            # Key-value metadata filters
-    description_of_diabetes_status: "Control Without Diabetes"
+  sample_filters:
+    derived_diabetes_status: "Normal"
     treatments: "no_treatment"
-  min_cells_per_sample: 20                   # Minimum cells per sample (Seurat mode)
-  min_gene_counts: 5                         # Minimum raw counts for gene filtering
-  min_gene_proportion: 0.25                  # Gene must pass min_gene_counts in this fraction of samples
-  donor_col: "rrid"                          # Column for donor deduplication
+  min_gene_counts: 5
+  min_gene_proportion: 0.25
+  donor_col: "donor_accession"
 ```
 
-- **`sample_filters`**: Applied before any analysis. Each key is a metadata
-  column name; the value is the required value. All filters are AND-combined.
-- **`donor_col`**: When multiple samples share a donor, one is kept per
-  donor (deterministic random selection with seed 123).
-- **`min_gene_counts`** / **`min_gene_proportion`**: A gene must have at
-  least `min_gene_counts` raw counts in at least `min_gene_proportion` of
-  samples. Applied to the interest matrix only, following the OG pipeline.
+| Key | Meaning |
+|-----|---------|
+| `sample_filters` | Key/value metadata filters, AND-combined. Applied before matrix construction |
+| `min_gene_counts` | Minimum raw counts per sample for gene to pass (interest matrix) |
+| `min_gene_proportion` | Gene must hit `min_gene_counts` in this fraction of samples |
+| `donor_col` | Column used to keep one sample per donor (seed 123) |
 
 ### `deseq2`
 
@@ -64,11 +60,13 @@ deseq2:
   lfc_threshold: 0
 ```
 
-- **`design`**: The DESeq2 formula. Default `~ subtype + sample` tests
-  cell-type effect while blocking on donor. In most cases this should not
-  be changed.
-- **`lfc_threshold`**: Minimum absolute log2 fold change. Set to 0 to
-  report all DEGs (default).
+| Key | Meaning |
+|-----|---------|
+| `design` | DESeq2 formula. Default pairs on donor — do not change unless you know why |
+| `fdr_threshold` | `padj` cutoff for DEG counts |
+| `lfc_threshold` | Absolute shrunk-LFC cutoff for DEG counts (0 = all significant genes) |
+
+Rule 03 always runs `lfcShrink(..., type = "apeglm")` and writes `log2FoldChange_shrunk`.
 
 ### `fgsea`
 
@@ -89,20 +87,21 @@ fgsea:
   n_top_pathways_plot: 20
 ```
 
-- **`ranking_stat`**: `"stat"` uses the DESeq2 Wald statistic directly.
-  `"lfc_pvalue"` uses `(-log10(pvalue)) * log2FoldChange`.
-- **`exclude_gene_lists`**: CSV files containing gene symbols to remove
-  before ranking. Expected format: HGNC download with "Approved symbol"
-  column, or single-column gene list.
-- **`exclude_gene_patterns`**: Regex patterns applied to gene names.
+| Key | Meaning |
+|-----|---------|
+| `ranking_stat` | `stat` = Wald statistic (recommended). `lfc_pvalue` = `-log10(p) * LFC` |
+| `exclude_gene_lists` | CSVs of gene symbols to drop before ranking |
+| `exclude_gene_patterns` | Regex filters applied to gene names |
+| Pathway size | Only pathways with 10–500 genes tested |
 
 ### `steps`
 
 ```yaml
 steps:
-  make_pseudobulk: false                     # true = build from Seurat; false = use counts_dir
-  fgsea: true                                # Run pathway enrichment after DESeq2
+  fgsea: true
 ```
+
+Toggle fGSEA off to stop after DESeq2.
 
 ### `outputs` and `logging`
 
@@ -112,18 +111,14 @@ outputs:
   logs_dir: "logs"
 
 logging:
-  level: "INFO"                              # DEBUG | INFO | WARN | ERROR
+  level: "INFO"          # DEBUG | INFO | WARN | ERROR
 ```
 
 ---
 
-## Count Matrix Format
+## Count matrix format
 
-EasyCM requires **paired** count matrices per cell type -- one for the
-cell type of interest and one for all other cells. Two directory layouts
-are supported:
-
-### Layout 1: OG Pipeline (recommended for existing data)
+EasyCM consumes the paired TSVs produced by the **EasyPseudobulk** notebook:
 
 ```
 data/counts/
@@ -137,65 +132,36 @@ data/counts/
     └── ...
 ```
 
-Files are tab-separated. First column is gene name, remaining columns are
-sample IDs.
-
-### Layout 2: EasyCM Paired Naming
+Tab-separated. First column = gene symbol, remaining columns = sample IDs matching
+`inputs.sample_column` values in the metadata CSV.
 
 ```
-data/counts/
-├── Alpha_interest.counts.csv
-├── Alpha_other.counts.csv
-├── Beta_interest.counts.csv
-├── Beta_other.counts.csv
-└── ...
+gene    SAMN001  SAMN002  SAMN003
+INS     142      0        88
+GCG     0        201      0
 ```
 
-Files are comma-separated with the same structure.
+### Cell-type discovery
 
-### Layout 3: Seurat Object (automated)
-
-Set `steps.make_pseudobulk: true` and provide `inputs.seurat_object`.
-The pipeline builds both matrices internally using `AggregateExpression()`.
-List cell types in `inputs.celltypes`.
-
-### Matrix structure
-
-```
-gene    SAMN001  SAMN002  SAMN003  ...
-INS     142      0        88       ...
-GCG     0        201      0        ...
-```
-
-Genes as rows, samples as columns. First column is the gene symbol.
+When `inputs.celltypes` is empty, rule 01 scans `counts_dir/cell_mtx/` and extracts cell
+type names from `{CellType}_persample_RNA_counts.tsv`. A matching file must exist in
+`counts_dir/allbut_mtx/` or the cell type is rejected.
 
 ---
 
-## Sample Metadata Format
+## Sample metadata format
 
-`data/sample_metadata.csv` -- one row per sample, must contain:
+`sample_metadata.csv`, one row per sample. Must contain:
 
-- The `sample_column` specified in config (e.g. `samples`)
-- The `donor_col` for deduplication (e.g. `rrid`)
-- All columns referenced in `sample_filters`
+- `inputs.sample_column` (sample IDs matching matrix columns)
+- `filtering.donor_col` (donor key for deduplication)
+- Every column referenced in `filtering.sample_filters`
 
 ---
 
-## Cell Type Discovery
+## Legacy note
 
-When `inputs.celltypes` is empty, EasyCM auto-discovers cell types from
-the count directory:
-
-1. First checks for `{CellType}.counts.csv` files directly in `counts_dir`
-2. Falls back to `cell_mtx/{CellType}_persample_RNA_counts.tsv` files
-3. Cell type names are extracted from filenames
-
-To analyze only specific cell types, list them explicitly:
-
-```yaml
-inputs:
-  celltypes:
-    - Beta
-    - Alpha
-    - Delta
-```
+Earlier versions of EasyCM supported building pseudobulk from a Seurat `.rds` via
+`steps.make_pseudobulk: true` and `inputs.seurat_object`. Both keys are removed.
+Pseudobulk construction now lives entirely in the separate **EasyPseudobulk** notebook;
+EasyCM only consumes its output.

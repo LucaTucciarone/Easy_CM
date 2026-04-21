@@ -1,178 +1,163 @@
 # Methods
 
-## Pseudobulk Design (step 02)
+## Pseudobulk design (rule 02)
 
-EasyCM discovers cell-type marker genes by comparing each cell type against
-all other cells in the dataset. For each cell type, the pipeline constructs
-a **combined count matrix** where every sample appears twice:
+For each cell type, rule 02 builds a **combined count matrix** in which every retained
+sample appears twice:
 
-- **interest**: pseudobulk counts from cells of this type
-- **other**: pseudobulk counts from all remaining cells
+- **interest**: pseudobulk counts of cells of this type in that sample
+- **other**: pseudobulk counts of all remaining cells in that sample
 
-This paired design is critical. By including the same samples in both
-groups, the DESeq2 `~ subtype + sample` formula can isolate the cell-type
-effect (`subtype`) while perfectly controlling for donor-to-donor variation
-(`sample`). This is equivalent to a paired t-test generalized to the
-negative binomial framework.
+This paired layout is what makes the design formula work. With the same donors present in
+both groups, `~ subtype + sample` isolates the cell-type effect (`subtype`: interest vs other)
+while absorbing all donor-level variance into the `sample` term. It is the negative-binomial
+analog of a paired t-test, applied gene by gene.
 
-### Sample filtering
+### Sample filters (PankBase pancreas run)
 
-Before building the combined matrix:
+Applied to `sample_metadata.csv` before matrix construction:
 
-1. **Metadata filters** are applied (e.g. `diabetes_status: "Control"`),
-   restricting analysis to a homogeneous cohort.
-2. **Sample matching**: only samples present in both the interest and other
-   matrices are retained.
-3. **Donor deduplication**: when multiple samples share a donor (via
-   `donor_col`), one is randomly kept per donor (seed 123 for
-   reproducibility). This prevents pseudoreplication.
+| Filter | Value |
+|--------|-------|
+| `derived_diabetes_status` | `Normal` |
+| `treatments` | `no_treatment` |
 
-### Gene filtering
+Only samples present in both the interest and other matrices are kept.
 
-Genes are filtered on the **interest matrix only** (following the OG
-pipeline convention):
+### Donor deduplication
 
-- A gene must have at least `min_gene_counts` raw counts in at least
-  `min_gene_proportion` of samples.
-- Default: 5 counts in 25% of samples.
-- After filtering, the same gene set is applied to both matrices.
+When multiple samples share a `donor_accession`, one is kept at random per donor with
+`set.seed(123)`. This prevents pseudoreplication without introducing selection bias across runs.
+
+### Gene filter
+
+Applied to the **interest matrix only**, then the surviving gene set is applied to the other
+matrix:
+
+- A gene must have **≥ 5 raw counts in ≥ 25 % of samples**.
+
+Genes that pass in the interest matrix but are zero in the other matrix are retained
+(biologically meaningful: cell-type-specific expression).
 
 ### Preflight checks
 
-Before proceeding to DESeq2, the pipeline verifies:
+Before DESeq2, rule 02 requires:
 
-- At least 3 shared samples exist (minimum for DESeq2 dispersion estimation)
-- At least 10 genes pass filtering
-- Zero-count columns are removed from the combined matrix
+- ≥ 3 shared samples (DESeq2 dispersion minimum)
+- ≥ 10 genes surviving the filter
+- No all-zero columns
 
-Cell types that fail these checks are **skipped** with a specific status
-(`skipped_no_samples`, `skipped_min_cells`, `skipped_preflight`) and
-sentinel files are written to satisfy Snakemake's output contract.
+Failure writes a skip sentinel and propagates a `skipped_*` status downstream.
 
 ---
 
-## DESeq2 (step 03)
+## DESeq2 (rule 03)
 
-Standard DESeq2 pseudobulk analysis with the design formula
-`~ subtype + sample`:
+Standard pseudobulk workflow on the combined matrix:
 
-1. **Size factor estimation** via DESeq2's median-of-ratios method
-2. **Dispersion estimation** -- gene-wise, then shrunk to the fitted curve
-3. **Wald test** for the `subtype` coefficient
+1. **Size factors**: DESeq2 median-of-ratios.
+2. **Dispersion**: gene-wise estimates shrunk to the parametric fitted curve.
+3. **Wald test** on the `subtype` coefficient.
 
 Results are extracted with `contrast = c("subtype", "interest", "other")`:
 
-- **Positive log2FoldChange** = gene is upregulated in the cell type of interest
-  (i.e. a positive marker)
-- **Negative log2FoldChange** = gene is downregulated in the cell type
-  (i.e. more highly expressed in other cell types)
+- `log2FoldChange > 0` → upregulated in the cell type of interest (positive marker)
+- `log2FoldChange < 0` → higher in other cells (negative marker)
+
+### apeglm LFC shrinkage
+
+The raw `log2FoldChange` is noisy for low-count genes. After the Wald test, rule 03 calls
+`lfcShrink(..., type = "apeglm")` on the `subtype_interest_vs_other` coefficient. The shrunk
+estimate is reported as `log2FoldChange_shrunk` alongside the raw value.
+
+Use the shrunk estimate for ranking, visualisation, and downstream comparison. The raw value
+is retained for transparency and for any test that assumes unshrunk effect sizes.
 
 ### DEG counting
 
-DEGs are counted at the configured thresholds:
-
-- `deseq2.fdr_threshold` (default 0.05) for adjusted p-value
-- `deseq2.lfc_threshold` (default 0) for minimum absolute fold change
-
-Both upregulated and downregulated genes are counted and reported separately.
-
-### Volcano plot
-
-A volcano plot is generated per cell type showing:
-- Upregulated markers in red
-- Downregulated genes in blue
-- Horizontal dashed line at the FDR threshold
+At FDR 0.05 and `lfc_threshold = 0` (absolute shrunk LFC), genes are counted as up- or
+downregulated and reported separately in the per-cell-type summary and the volcano plot.
 
 ---
 
-## fGSEA (step 04)
+## fGSEA (rule 04)
 
-Fast Gene Set Enrichment Analysis using `fgseaMultilevel()` with `eps = 0.0`
-for exact p-value computation.
+`fgseaMultilevel(..., eps = 0.0)` — multilevel splitting for exact small p-values.
 
-### Gene ranking
+### Ranking metric
 
-Before ranking, genes are filtered to remove:
+**Wald statistic** (`stat` column from DESeq2). Combines effect size and precision in one
+signed value, and is the standard recommended GSEA input for DESeq2 output.
 
-1. **Ribosomal genes**: RPL and RPS family (from `rpl_genes.csv` and
-   `rps_genes.csv`)
-2. **Mitochondrial genes**: MT- prefix and mitochondrially-encoded genes
-   (from `mtr_genes.csv`)
-3. **Additional patterns**: regex patterns from `exclude_gene_patterns`
-   (e.g. `^NA` for non-annotated genes)
+### Gene exclusions
 
-These highly variable housekeeping genes would otherwise dominate pathway
-results without providing biological insight.
+Removed before ranking:
 
-**Ranking metric** (configurable via `fgsea.ranking_stat`):
+- Ribosomal proteins: RPL, RPS families (`rpl_genes.csv`, `rps_genes.csv`)
+- Mitochondrial genes: `MT-` prefix and mt-encoded genes (`mtr_genes.csv`)
+- Any regex in `fgsea.exclude_gene_patterns` (e.g. `^NA`)
 
-| Option | Formula | When to use |
-|--------|---------|-------------|
-| `stat` (default) | DESeq2 Wald statistic | Recommended -- combines effect size and precision |
-| `lfc_pvalue` | `(-log10(pvalue)) * log2FoldChange` | OG pipeline method -- directional, p-value weighted |
+These genes are highly variable across samples for reasons unrelated to cell-type biology
+and would otherwise dominate pathway rankings.
 
 ### Gene sets
 
-Default: merged Reactome + KEGG pathways from MSigDB
-(`resources/gsea_files/reactome_kegg.gmt.txt`). To use a different
-collection, set `fgsea.gene_sets_file` in your config.
+Default: merged Reactome + KEGG from MSigDB
+(`resources/gsea_files/reactome_kegg.gmt.txt`). Only pathways with **10–500 genes** are
+tested.
 
-### Pathway size filtering
+### Thresholds
 
-Only pathways with gene counts between `min_gene_set_size` (default 10)
-and `max_gene_set_size` (default 500) are tested. This removes pathways
-that are too small (unreliable enrichment scores) or too broad (low
-specificity).
-
-### Output
-
-- **`fgsea_all.tsv`**: all tested pathways with NES, p-value, and adjusted
-  p-value
-- **`fgsea_significant.tsv`**: pathways passing `fgsea.fdr_threshold`
-  (default 0.10)
-- **`fgsea_pathways.pdf`**: bar chart of top N pathways by NES, colored by
-  enrichment direction
+- Pathway FDR: **0.10** (`fgsea_significant.tsv`)
+- All tested pathways (any p-value) go to `fgsea_all.tsv`
 
 ---
 
-## Aggregation (step 05)
+## Outputs
 
-Step 05 walks all cell type result directories and builds:
+### `results_deseq.tsv` (rule 03)
 
-1. **`celltype_summary.csv`**: one row per cell type with status,
-   sample counts, DEG counts, pathway counts, and error messages.
-   Status is determined by checking output files and log entries.
+| Column | Meaning |
+|--------|---------|
+| `gene` | Gene symbol |
+| `baseMean` | Mean normalised count across samples |
+| `log2FoldChange` | Raw DESeq2 LFC, interest vs other |
+| `log2FoldChange_shrunk` | apeglm-shrunk LFC — **use this for ranking/plots** |
+| `lfcSE` | Standard error of raw LFC |
+| `stat` | Wald statistic (used as fGSEA ranking metric) |
+| `pvalue` | Wald p-value |
+| `padj` | BH-adjusted p-value |
 
-2. **`all_markers_deseq.tsv`**: concatenated DESeq2 results across all
-   cell types (with added `celltype` column).
+### `fgsea_significant.tsv` (rule 04)
 
-3. **`all_fgsea.tsv`**: concatenated fGSEA results across all cell types.
+Pathways with `padj ≤ 0.10`:
 
-4. **`log_summary.tsv`**: all WARN, ERROR, and SKIP log lines extracted
-   from per-celltype logs.
-
-5. **`status_overview.pdf`**: heatmap showing status (color-coded) and
-   DEG counts (numeric labels) for every cell type.
-
----
-
-## Pipeline Summary (step 06)
-
-Generates the final outputs:
-
-- **`pipeline_summary.csv`**: copy of `celltype_summary.csv` at the results
-  root for convenience.
-- **`pipeline_summary.pdf`**: bar chart of DEG counts per cell type,
-  ordered from most to fewest markers. Only cell types with `success`
-  status are included.
+| Column | Meaning |
+|--------|---------|
+| `pathway` | Pathway name |
+| `pval` / `padj` | Multilevel p-value, BH-adjusted |
+| `ES` / `NES` | Enrichment score and normalised enrichment score |
+| `size` | Genes in pathway after exclusions |
+| `leadingEdge` | Comma-separated core enrichment genes |
 
 ---
 
-## Skip Sentinel System
+## Aggregation (rules 05–06)
 
-Snakemake requires all declared output files to exist. When a cell type is
-skipped (e.g. too few samples) or errors out, the pipeline writes
-placeholder "sentinel" files containing `skipped=TRUE` for each expected
-output. This satisfies Snakemake's file contract without generating
-misleading result files. Downstream steps detect sentinels via
-`is_skip_sentinel()` and propagate the skip cleanly.
+Rule 05 walks `results/{celltype}/` and produces:
+
+- `celltype_summary.csv` — status, sample/DEG/pathway counts, error messages per cell type
+- `all_markers_deseq.tsv`, `all_fgsea.tsv` — concatenated results with `celltype` column
+- `log_summary.tsv` — WARN/ERROR/SKIP lines from all logs
+- `status_overview.pdf` — heatmap: status colour + DEG counts
+
+Rule 06 copies the summary to `results/pipeline_summary.csv` and renders
+`pipeline_summary.pdf` (DEG bar chart, success-only, sorted descending).
+
+---
+
+## Skip sentinel system
+
+Snakemake requires every declared output to exist. When a cell type is skipped or errors,
+rule 02/03 writes sentinel TSVs containing `skipped=TRUE`. Downstream steps detect these
+via `is_skip_sentinel()` and propagate the skip without producing misleading files.

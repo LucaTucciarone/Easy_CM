@@ -1,46 +1,46 @@
 # Running the Pipeline
 
-## Running with Snakemake
-
-Snakemake is the recommended way to run EasyCM. It handles the full DAG
-of dependencies, parallelizes steps 02--04 across all cell types, and
-automatically retries failed jobs.
-
-### Run all cell types
+All invocations go through the `EasyDE` micromamba environment, which provides DESeq2,
+apeglm, fGSEA, and the rest of the R stack.
 
 ```bash
-micromamba activate EasyCM
+MAMBA=/home/luca/bin/micromamba
+ENV=EasyDE
+```
 
-snakemake --profile profiles/local \
+---
+
+## Run with Snakemake
+
+### Full run (all cell types)
+
+```bash
+$MAMBA run -n $ENV snakemake --profile profiles/local \
     --config pipeline_config=config/config.yaml
 ```
 
-This runs **all** cell types discovered from the count matrices. For 12
-cell types, that is ~40 jobs total (12 x 3 per-celltype steps + 3 global
-steps).
+Rules 02–04 run in parallel across cell types. For the PankBase 12-cell-type run this is
+~40 jobs total (12 × 3 per-celltype + validate + aggregate + summary).
 
-### Dry run (see what would execute)
+### Dry run
 
 ```bash
-snakemake --profile profiles/local \
-    --config pipeline_config=config/config.yaml -n
+$MAMBA run -n $ENV snakemake -n --config pipeline_config=config/config.yaml
 ```
 
-### Run specific cell types
+### Restrict to specific cell types
 
-Restrict to specific cell types by listing them in the config:
+Either list them in config:
 
 ```yaml
 inputs:
-  celltypes:
-    - Beta
-    - Alpha
+  celltypes: [Beta, Alpha]
 ```
 
-Or request specific output files:
+…or request specific outputs:
 
 ```bash
-snakemake --profile profiles/local \
+$MAMBA run -n $ENV snakemake --profile profiles/local \
     --config pipeline_config=config/config.yaml \
     results/Beta/finals/results_deseq.tsv
 ```
@@ -48,92 +48,47 @@ snakemake --profile profiles/local \
 ### Clean and re-run
 
 ```bash
-# Remove results for one cell type
-rm -rf results/Beta/
+rm -rf results/Beta/              # one cell type
+rm -rf results/ logs/             # everything
 
-# Remove all results
-rm -rf results/ logs/
-
-# Then re-run
-snakemake --profile profiles/local \
+$MAMBA run -n $ENV snakemake --profile profiles/local \
     --config pipeline_config=config/config.yaml
 ```
 
 ---
 
-## Running on SLURM
-
-For cluster execution, use the SLURM profile. Edit
-`profiles/slurm/config.yaml` to set your account, partition, and QOS:
-
-```yaml
-# profiles/slurm/config.yaml (edit these)
-default-resources:
-  slurm_account: your_account
-  slurm_partition: your_partition
-  slurm_qos: your_qos
-  mem_mb: 8000
-  time: 240      # minutes
-  cpus: 1
-```
-
-Then run:
+## Run step by step (manual / debugging)
 
 ```bash
-snakemake --profile $PWD/profiles/slurm \
-    --config pipeline_config=config/config.yaml
-```
+CONFIG=config/config.yaml
+CELLTYPE=Beta
+RUN="$MAMBA run -n $ENV Rscript"
 
-> **Note:** Use `$PWD/profiles/slurm` (absolute path) for the SLURM profile.
-> SLURM jobs inherit the working directory, so all paths resolve correctly.
+$RUN workflow/scripts/01_validate.R            --config $CONFIG
+$RUN workflow/scripts/02_prepare_pseudobulk.R  --config $CONFIG --celltype $CELLTYPE
+$RUN workflow/scripts/03_run_deseq.R           --config $CONFIG --celltype $CELLTYPE
+$RUN workflow/scripts/04_run_fgsea.R           --config $CONFIG --celltype $CELLTYPE
+$RUN workflow/scripts/05_aggregate_results.R   --config $CONFIG    # after all celltypes
+$RUN workflow/scripts/06_pipeline_summary.R    --config $CONFIG
+```
 
 ---
 
-## Running Step by Step
+## Timing (PankBase, 191 samples, 12 cell types, ophelia)
 
-For debugging or educational purposes, you can run each script manually.
-All commands assume you are in the pipeline root directory.
+| Rule | Per cell type | Notes |
+|------|---------------|-------|
+| 02 Pseudobulk | ~1 s | pre-made matrices |
+| 03 DESeq2 + apeglm | 1–5 min | gene-count dependent |
+| 04 fGSEA | ~5 s | |
+| 05 + 06 | ~5 s total | once |
 
-```bash
-micromamba activate EasyCM
+Sequential: ~15 min. Parallel (local profile, 12 jobs): ~5 min.
 
-CONFIG="config/config.yaml"
-CELLTYPE="Beta"
+---
 
-# Step 01 -- Validate (once per run)
-Rscript workflow/scripts/01_validate.R --config "$CONFIG"
+## SLURM
 
-# Step 02 -- Prepare pseudobulk matrices
-Rscript workflow/scripts/02_prepare_pseudobulk.R \
-    --config "$CONFIG" --celltype "$CELLTYPE"
-
-# Step 03 -- DESeq2 marker detection
-Rscript workflow/scripts/03_run_deseq.R \
-    --config "$CONFIG" --celltype "$CELLTYPE"
-
-# Step 04 -- fGSEA pathway enrichment (optional)
-Rscript workflow/scripts/04_run_fgsea.R \
-    --config "$CONFIG" --celltype "$CELLTYPE"
-
-# Step 05 -- Aggregate results (once, after all cell types complete)
-Rscript workflow/scripts/05_aggregate_results.R --config "$CONFIG"
-
-# Step 06 -- Pipeline summary (once, after aggregation)
-Rscript workflow/scripts/06_pipeline_summary.R --config "$CONFIG"
-```
-
-### Timing expectations
-
-On a local machine (64 cores):
-
-| Step | Time per cell type | Notes |
-|------|-------------------|-------|
-| 01 Validate | ~2 seconds | Once per run |
-| 02 Pseudobulk | ~1 second | Pre-made matrices; longer with Seurat |
-| 03 DESeq2 | 1--5 minutes | Depends on gene count and sample size |
-| 04 fGSEA | ~5 seconds | After DESeq2 results are available |
-| 05 Aggregate | ~3 seconds | Once after all cell types |
-| 06 Summary | ~2 seconds | Once after aggregation |
-
-A full run on 12 cell types typically completes in 10--20 minutes
-sequentially, or 3--5 minutes with Snakemake parallelization.
+`profiles/slurm/config.yaml` is provided but **not tested on ophelia** (no `sbatch`).
+To use on a SLURM cluster, edit the profile to set your account/partition/QOS and invoke
+with `--profile $PWD/profiles/slurm` (absolute path).

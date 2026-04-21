@@ -92,7 +92,7 @@ rule validate:
         os.path.join(LOGS_DIR, "01_validate.log")
     shell:
         """
-        Rscript {SCRIPTS_DIR}/01_validate.R \
+        /home/luca/bin/micromamba run -n EasyDE Rscript {SCRIPTS_DIR}/01_validate.R \
             --config {input.config} \
             > {log} 2>&1
         """
@@ -116,7 +116,7 @@ rule prepare_pseudobulk:
         os.path.join(LOGS_DIR, "{celltype}_02.log")
     shell:
         """
-        Rscript {SCRIPTS_DIR}/02_prepare_pseudobulk.R \
+        /home/luca/bin/micromamba run -n EasyDE Rscript {SCRIPTS_DIR}/02_prepare_pseudobulk.R \
             --config {input.config} \
             --celltype "{params.celltype}" \
             > {log} 2>&1
@@ -140,7 +140,7 @@ rule run_deseq:
         os.path.join(LOGS_DIR, "{celltype}_03.log")
     shell:
         """
-        Rscript {SCRIPTS_DIR}/03_run_deseq.R \
+        /home/luca/bin/micromamba run -n EasyDE Rscript {SCRIPTS_DIR}/03_run_deseq.R \
             --config {input.config} \
             --celltype "{params.celltype}" \
             > {log} 2>&1
@@ -163,7 +163,7 @@ rule run_fgsea:
         os.path.join(LOGS_DIR, "{celltype}_04.log")
     shell:
         """
-        Rscript {SCRIPTS_DIR}/04_run_fgsea.R \
+        /home/luca/bin/micromamba run -n EasyDE Rscript {SCRIPTS_DIR}/04_run_fgsea.R \
             --config {input.config} \
             --celltype "{params.celltype}" \
             > {log} 2>&1
@@ -187,7 +187,7 @@ rule aggregate:
         os.path.join(LOGS_DIR, "05_aggregate.log")
     shell:
         """
-        Rscript {SCRIPTS_DIR}/05_aggregate_results.R \
+        /home/luca/bin/micromamba run -n EasyDE Rscript {SCRIPTS_DIR}/05_aggregate_results.R \
             --config {input.config} \
             > {log} 2>&1
         """
@@ -207,7 +207,7 @@ rule pipeline_summary:
         os.path.join(LOGS_DIR, "06_pipeline_summary.log")
     shell:
         """
-        Rscript {SCRIPTS_DIR}/06_pipeline_summary.R \
+        /home/luca/bin/micromamba run -n EasyDE Rscript {SCRIPTS_DIR}/06_pipeline_summary.R \
             --config {input.config} \
             > {log} 2>&1
         """

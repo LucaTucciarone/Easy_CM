@@ -84,9 +84,26 @@ main <- function(config_path, celltype) {
     logger$info("load_metadata", sprintf("n_samples=%d, n_cols=%d",
                 nrow(sample_meta), ncol(sample_meta)))
 
-    # --- Apply sample filters from config ---
+    # --- Derive missing filter columns from sample names ---
+    # Some datasets encode treatments in sample names (e.g., "HP.21070__DHT_10nM").
+    # If config filters reference a column that doesn't exist in metadata but sample
+    # names contain "__", derive the column: text after last "__" = treatment value,
+    # no "__" = "no_treatment".
     filters <- cfg$filtering$sample_filters
+    sample_col <- cfg$inputs$sample_column %||% "donor_accession"
     if (!is.null(filters) && length(filters) > 0) {
+        for (filt_col in names(filters)) {
+            if (!filt_col %in% colnames(sample_meta) && any(grepl("__", sample_meta[[sample_col]]))) {
+                sample_meta[[filt_col]] <- ifelse(
+                    grepl("__", sample_meta[[sample_col]]),
+                    sub(".*__", "", sample_meta[[sample_col]]),
+                    "no_treatment"
+                )
+                logger$info("derive_column",
+                    sprintf("Derived '%s' from sample names (%d unique values)",
+                            filt_col, length(unique(sample_meta[[filt_col]]))))
+            }
+        }
         sample_meta <- apply_subset_filters(sample_meta, filters)
         logger$info("sample_filters", sprintf("n_samples_after_filter=%d", nrow(sample_meta)))
     }
@@ -102,8 +119,7 @@ main <- function(config_path, celltype) {
     interest_counts <- loaded$interest
     other_counts    <- loaded$other
 
-    # --- Donor filtering: keep only samples with enough cells ---
-    sample_col <- cfg$inputs$sample_column %||% "donor_accession"
+    # --- Sample matching and optional donor dedup ---
     donor_col  <- cfg$filtering$donor_col
 
     # Standardize sample names (replace hyphens with dots to match matrix colnames)
@@ -127,6 +143,46 @@ main <- function(config_path, celltype) {
     other_counts    <- other_counts[, shared_samples, drop = FALSE]
 
     logger$info("sample_match", sprintf("n_shared_samples=%d", length(shared_samples)))
+
+    # --- Min-cells-per-sample filter ---
+    # EasyPseudobulk writes cell_counts.tsv alongside sample_metadata.tsv.
+    # Use it to drop samples with too few cells of this type.
+    min_cells <- cfg$filtering$min_cells_per_sample %||% 0
+    if (min_cells > 0) {
+        cc_path <- file.path(dirname(cfg$inputs$sample_metadata), "cell_counts.tsv")
+        if (file.exists(cc_path)) {
+            cell_counts <- fread(cc_path) %>% as.data.frame()
+            # Standardize sample names
+            cc_sample_col <- colnames(cell_counts)[1]
+            cell_counts[[cc_sample_col]] <- gsub("-", ".", cell_counts[[cc_sample_col]])
+
+            # Find column matching this cell type (try exact, then unsanitized)
+            ct_col <- NULL
+            for (cand in c(celltype, gsub("_", " ", celltype))) {
+                if (cand %in% colnames(cell_counts)) { ct_col <- cand; break }
+            }
+
+            if (!is.null(ct_col)) {
+                passing <- cell_counts[[cc_sample_col]][
+                    !is.na(cell_counts[[ct_col]]) & cell_counts[[ct_col]] >= min_cells
+                ]
+                before_n <- length(shared_samples)
+                shared_samples  <- intersect(shared_samples, passing)
+                interest_counts <- interest_counts[, shared_samples, drop = FALSE]
+                other_counts    <- other_counts[, shared_samples, drop = FALSE]
+                logger$info("min_cells_filter",
+                    sprintf("min_cells>=%d for '%s': %d->%d samples",
+                            min_cells, ct_col, before_n, length(shared_samples)))
+            } else {
+                logger$warn("min_cells_filter",
+                    sprintf("Cell count column for '%s' not found in %s -- skipping",
+                            celltype, cc_path))
+            }
+        } else {
+            logger$warn("min_cells_filter",
+                sprintf("cell_counts.tsv not found at %s -- skipping min-cells filter", cc_path))
+        }
+    }
 
     if (length(shared_samples) < 3) {
         logger$skip("too_few_samples",

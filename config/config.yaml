@@ -13,10 +13,11 @@ inputs:
   # EasyPseudobulk output: counts/easycm/{cell_mtx,allbut_mtx}/{celltype}_persample_RNA_counts.tsv
   counts_dir: "data/counts/easycm"
 
-  # Donor-level metadata (EasyPseudobulk writes this as metadata/donor_metadata.tsv).
-  # `sample_column` must name the donor-id column in this file; it must
-  # also match the column headers inside the counts matrices.
-  sample_metadata: "data/donor_metadata.tsv"
+  # Sample-level metadata (EasyPseudobulk writes metadata/sample_metadata.tsv).
+  # `sample_column` must name the column whose values match the count-matrix
+  # column headers. Usually "samples" (library/run level) or "donor_accession"
+  # (donor level) -- must match the notebook's agg_col setting.
+  sample_metadata: "data/sample_metadata.tsv"
   sample_column: "donor_accession"
 
   # Which cell types to analyze (empty list = all discovered from counts_dir)
@@ -40,7 +41,7 @@ filtering:
   min_cells_per_sample: 20                     # Minimum cells of this type per sample
   min_gene_counts: 5                           # Minimum raw counts for gene filtering
   min_gene_proportion: 0.25                    # Gene must pass min_gene_counts in this fraction of samples
-  donor_col: "donor_accession"                 # Column for donor deduplication (keep first per donor)
+  # donor_col: "donor_accession"               # Optional dedup: keep one sample per donor. Usually unnecessary when design includes + sample term.
 
 # --- DESeq2 parameters ---
 deseq2:
